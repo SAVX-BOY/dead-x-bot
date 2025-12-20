@@ -1,15 +1,35 @@
 // src/core/client.js
 
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, NoAuth } = require('whatsapp-web.js');
 const config = require('../config/menu.config');
+const SessionManager = require('./sessionManager');
 
 class WhatsAppClient {
   constructor() {
     this.client = null;
+    this.sessionManager = new SessionManager(
+      config.scannerUrl,
+      config.sessionId
+    );
   }
 
-  getClient() {
+  async getClient() {
     if (!this.client) {
+      // Check if we should use scanner session
+      const useScanner = config.sessionId && config.scannerUrl;
+      
+      if (useScanner) {
+        console.log('🔍 Checking for existing session in scanner...');
+        const sessionData = await this.sessionManager.fetchSessionFromScanner();
+        
+        if (sessionData) {
+          console.log('✅ Using session from scanner');
+          await this.sessionManager.ensureSessionDirectory();
+        } else {
+          console.log('⚠️  Session not found or invalid. Will generate QR code.');
+        }
+      }
+
       // Puppeteer configuration for Render
       const puppeteerConfig = {
         headless: true,
@@ -28,7 +48,6 @@ class WhatsAppClient {
       };
 
       // Only set executablePath if explicitly provided
-      // On Render, Puppeteer will download and use its own Chromium
       if (process.env.PUPPETEER_EXECUTABLE_PATH) {
         puppeteerConfig.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
       }
@@ -48,7 +67,7 @@ class WhatsAppClient {
   }
 
   async initialize() {
-    const client = this.getClient();
+    const client = await this.getClient();
     
     try {
       await client.initialize();
