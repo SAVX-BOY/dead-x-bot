@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: dead-x-bot
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 18.18.0
+      - key: NODE_ENV
+        value: production
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: false
+      # DO NOT SET PUPPETEER_EXECUTABLE_PATH - Let Puppeteer use its own Chromium
+      - key: MONGODB_URI
+        sync: false
+      - key: SESSION_ID
+        sync: false
+      - key: NETHUNTER_FX_URL
+        sync: false
+      - key: OWNER_NUMBER
+        sync: false
+      - key: BOT_NAME
+        value: DEAD-X-BOT
+      - key: BOT_PREFIX
+        value: "!"
+      - key: DEVELOPER
+        value: D3AD_XMILE
+      - key: LOG_LEVEL
+        value: info
