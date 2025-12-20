@@ -1,6 +1,7 @@
-// server.js - DEAD-X-BOT Main Entry Point
+// server.js - DEAD-X-BOT Main Entry Point (FIXED VERSION)
 
 require('dotenv').config();
+const express = require('express');
 const { Client } = require('whatsapp-web.js');
 const connectDB = require('./src/config/database');
 const WhatsAppClient = require('./src/core/client');
@@ -53,7 +54,67 @@ whatsappClient.initialize().then(() => {
   process.exit(1);
 });
 
-// Graceful shutdown
+// ============================================
+// HTTP SERVER FOR RENDER (REQUIRED!)
+// ============================================
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(express.json());
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  const botStatus = client.info ? {
+    connected: true,
+    phone: client.info.wid.user,
+    platform: client.info.platform
+  } : {
+    connected: false,
+    status: 'Initializing...'
+  };
+
+  res.json({
+    status: 'running',
+    bot: 'DEAD-X-BOT',
+    version: '1.0.0',
+    developer: 'D3AD_XMILE',
+    uptime: Math.floor(process.uptime()),
+    whatsapp: botStatus,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Health endpoint for Render
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK',
+    uptime: process.uptime()
+  });
+});
+
+// Bot status endpoint
+app.get('/status', (req, res) => {
+  res.json({
+    bot: 'DEAD-X-BOT',
+    connected: client.info ? true : false,
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Start HTTP server
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ HTTP server running on port ${PORT}`);
+  console.log(`✅ Health check: http://localhost:${PORT}/health`);
+});
+
+// ============================================
+// GRACEFUL SHUTDOWN
+// ============================================
+
 process.on('SIGINT', async () => {
   console.log('\n⚠️  Shutting down gracefully...');
   try {
