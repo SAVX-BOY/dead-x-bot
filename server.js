@@ -25,32 +25,48 @@ console.log(`
 console.log('🔄 Connecting to MongoDB...');
 connectDB();
 
-// Initialize WhatsApp Client
-console.log('🔄 Initializing WhatsApp client...');
-const whatsappClient = new WhatsAppClient();
-const client = whatsappClient.getClient();
-
-// Initialize Handlers
-const messageHandler = new MessageHandler(client, config);
-const eventHandler = new EventHandler(client);
-
-// Setup event listeners
-eventHandler.setupEvents();
-
-// Handle incoming messages
-client.on('message', async (msg) => {
+// Async initialization function
+async function initializeBot() {
   try {
-    await messageHandler.handleMessage(msg);
-  } catch (error) {
-    console.error('Error handling message:', error);
-  }
-});
+    // Initialize WhatsApp Client
+    console.log('🔄 Initializing WhatsApp client...');
+    const whatsappClient = new WhatsAppClient();
+    const client = await whatsappClient.getClient(); // AWAIT HERE!
 
-// Initialize bot
-whatsappClient.initialize().then(() => {
-  console.log('✅ DEAD-X-BOT initialized successfully!');
-}).catch((error) => {
-  console.error('❌ Failed to initialize bot:', error);
+    // Initialize Handlers
+    const messageHandler = new MessageHandler(client, config);
+    const eventHandler = new EventHandler(client);
+
+    // Setup event listeners
+    eventHandler.setupEvents();
+
+    // Handle incoming messages
+    client.on('message', async (msg) => {
+      try {
+        await messageHandler.handleMessage(msg);
+      } catch (error) {
+        console.error('Error handling message:', error);
+      }
+    });
+
+    // Initialize bot
+    await whatsappClient.initialize();
+    console.log('✅ DEAD-X-BOT initialized successfully!');
+
+    return client;
+
+  } catch (error) {
+    console.error('❌ Failed to initialize bot:', error);
+    process.exit(1);
+  }
+}
+
+// Start bot initialization
+let client = null;
+initializeBot().then(c => {
+  client = c;
+}).catch(error => {
+  console.error('Fatal error:', error);
   process.exit(1);
 });
 
@@ -66,7 +82,7 @@ app.use(express.json());
 
 // Health check endpoint
 app.get('/', (req, res) => {
-  const botStatus = client.info ? {
+  const botStatus = client && client.info ? {
     connected: true,
     phone: client.info.wid.user,
     platform: client.info.platform
@@ -98,7 +114,7 @@ app.get('/health', (req, res) => {
 app.get('/status', (req, res) => {
   res.json({
     bot: 'DEAD-X-BOT',
-    connected: client.info ? true : false,
+    connected: client && client.info ? true : false,
     uptime: process.uptime(),
     memory: process.memoryUsage(),
     timestamp: new Date().toISOString()
@@ -118,7 +134,9 @@ app.listen(PORT, '0.0.0.0', () => {
 process.on('SIGINT', async () => {
   console.log('\n⚠️  Shutting down gracefully...');
   try {
-    await whatsappClient.destroy();
+    if (client) {
+      await client.destroy();
+    }
     console.log('✅ Bot shut down successfully');
     process.exit(0);
   } catch (error) {
@@ -130,7 +148,9 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
   console.log('\n⚠️  Received SIGTERM, shutting down...');
   try {
-    await whatsappClient.destroy();
+    if (client) {
+      await client.destroy();
+    }
     console.log('✅ Bot shut down successfully');
     process.exit(0);
   } catch (error) {
