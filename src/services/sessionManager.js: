@@ -1,0 +1,129 @@
+const fs = require('fs').promises;
+const path = require('path');
+const axios = require('axios');
+
+class SessionManager {
+  constructor(scannerUrl, sessionId) {
+    this.scannerUrl = scannerUrl;
+    this.sessionId = sessionId;
+    this.authPath = path.join(process.cwd(), '.wwebjs_auth', `session-${sessionId}`);
+  }
+
+  /**
+   * Fetch session from scanner API
+   */
+  async fetchFromScanner() {
+    try {
+      console.log('🔄 Fetching session from scanner:', this.sessionId);
+      
+      const response = await axios.get(
+        `${this.scannerUrl}/session/${this.sessionId}`,
+        { timeout: 10000 }
+      );
+
+      if (!response.data || !response.data.session) {
+        throw new Error('No session data returned from scanner');
+      }
+
+      const { session } = response.data;
+      
+      console.log('✅ Session found in scanner!');
+      console.log('   Phone:', session.phoneNumber);
+      console.log('   Status:', session.status);
+      console.log('   Expires:', session.expiresAt);
+
+      return session;
+      
+    } catch (error) {
+      console.error('❌ Failed to fetch session:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Restore session to filesystem
+   */
+  async restoreToFilesystem(sessionData) {
+    try {
+      console.log('💾 Restoring session to filesystem...');
+      
+      // Create auth directory if it doesn't exist
+      await fs.mkdir(this.authPath, { recursive: true });
+
+      // Write session data to file
+      const sessionFile = path.join(this.authPath, 'session.json');
+      await fs.writeFile(
+        sessionFile,
+        JSON.stringify(sessionData, null, 2)
+      );
+
+      console.log('✅ Session restored to:', this.authPath);
+      return true;
+      
+    } catch (error) {
+      console.error('❌ Failed to restore session:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if session exists locally
+   */
+  async sessionExistsLocally() {
+    try {
+      const sessionFile = path.join(this.authPath, 'session.json');
+      await fs.access(sessionFile);
+      console.log('✅ Local session found');
+      return true;
+    } catch {
+      console.log('⚠️ No local session found');
+      return false;
+    }
+  }
+
+  /**
+   * Initialize session (fetch and restore if needed)
+   */
+  async initialize() {
+    try {
+      // Check if session exists locally (Render wipes filesystem on restart)
+      const localExists = await this.sessionExistsLocally();
+      
+      if (!localExists) {
+        console.log('🔄 Local session missing, fetching from scanner...');
+        
+        // Fetch from scanner
+        const session = await this.fetchFromScanner();
+        
+        if (session.status !== 'active') {
+          throw new Error(`Session status is ${session.status}, not active`);
+        }
+
+        // Restore to filesystem
+        await this.restoreToFilesystem(session.data);
+      } else {
+        console.log('✅ Using existing local session');
+      }
+
+      return true;
+      
+    } catch (error) {
+      console.error('❌ Session initialization failed:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete local session
+   */
+  async deleteLocal() {
+    try {
+      await fs.rm(this.authPath, { recursive: true, force: true });
+      console.log('🗑️ Local session deleted');
+    } catch (error) {
+      console.error('⚠️ Failed to delete local session:', error.message);
+    }
+  }
+}
+
+module.exports = SessionManager;
