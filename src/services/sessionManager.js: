@@ -50,18 +50,26 @@ class SessionManager {
       // Create auth directory if it doesn't exist
       await fs.mkdir(this.authPath, { recursive: true });
 
-      // Write session data to file
-      const sessionFile = path.join(this.authPath, 'session.json');
+      // whatsapp-web.js expects the session in a specific structure
+      // We need to create the session token files
+      const sessionFile = path.join(this.authPath, 'Default', 'Session Storage');
+      await fs.mkdir(sessionFile, { recursive: true });
+
+      // Write the main session data
+      const sessionJsonPath = path.join(this.authPath, 'session.json');
       await fs.writeFile(
-        sessionFile,
+        sessionJsonPath,
         JSON.stringify(sessionData, null, 2)
       );
 
       console.log('✅ Session restored to:', this.authPath);
+      console.log('✅ Session file created at:', sessionJsonPath);
+      
       return true;
       
     } catch (error) {
       console.error('❌ Failed to restore session:', error.message);
+      console.error('Error details:', error);
       throw error;
     }
   }
@@ -76,7 +84,7 @@ class SessionManager {
       console.log('✅ Local session found');
       return true;
     } catch {
-      console.log('⚠️ No local session found');
+      console.log('⚠️  No local session found (Render filesystem is ephemeral)');
       return false;
     }
   }
@@ -86,6 +94,8 @@ class SessionManager {
    */
   async initialize() {
     try {
+      console.log('\n🔐 Session Manager: Initializing...\n');
+      
       // Check if session exists locally (Render wipes filesystem on restart)
       const localExists = await this.sessionExistsLocally();
       
@@ -96,7 +106,15 @@ class SessionManager {
         const session = await this.fetchFromScanner();
         
         if (session.status !== 'active') {
-          throw new Error(`Session status is ${session.status}, not active`);
+          throw new Error(`Session status is ${session.status}, not active. Please rescan QR code.`);
+        }
+
+        // Check if session has expired
+        const expiresAt = new Date(session.expiresAt);
+        const now = new Date();
+        
+        if (expiresAt < now) {
+          throw new Error('Session has expired. Please rescan QR code.');
         }
 
         // Restore to filesystem
@@ -105,10 +123,12 @@ class SessionManager {
         console.log('✅ Using existing local session');
       }
 
+      console.log('\n✅ Session Manager: Ready\n');
       return true;
       
     } catch (error) {
-      console.error('❌ Session initialization failed:', error.message);
+      console.error('\n❌ Session initialization failed:', error.message);
+      console.error('🔄 Please generate a new session using the scanner\n');
       throw error;
     }
   }
@@ -119,9 +139,26 @@ class SessionManager {
   async deleteLocal() {
     try {
       await fs.rm(this.authPath, { recursive: true, force: true });
-      console.log('🗑️ Local session deleted');
+      console.log('🗑️  Local session deleted');
     } catch (error) {
-      console.error('⚠️ Failed to delete local session:', error.message);
+      console.error('⚠️  Failed to delete local session:', error.message);
+    }
+  }
+
+  /**
+   * Validate session with scanner
+   */
+  async validate() {
+    try {
+      const response = await axios.get(
+        `${this.scannerUrl}/session/validate/${this.sessionId}`,
+        { timeout: 5000 }
+      );
+
+      return response.data.valid === true;
+    } catch (error) {
+      console.error('⚠️  Failed to validate session:', error.message);
+      return false;
     }
   }
 }
