@@ -1,37 +1,28 @@
-// src/core/client.js
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const SessionManager = require('../services/sessionManager');
 
-const { Client, LocalAuth, NoAuth } = require('whatsapp-web.js');
-const config = require('../config/menu.config');
-const SessionManager = require('./sessionManager');
+async function initializeWhatsApp() {
+  try {
+    console.log('\n╔═══════════════════════════════════════╗');
+    console.log('║   🔄 Initializing WhatsApp Client    ║');
+    console.log('╚═══════════════════════════════════════╝\n');
 
-class WhatsAppClient {
-  constructor() {
-    this.client = null;
-    this.sessionManager = new SessionManager(
-      config.scannerUrl,
-      config.sessionId
+    // 1. Initialize session manager
+    const sessionManager = new SessionManager(
+      process.env.SCANNER_URL,
+      process.env.SESSION_ID
     );
-  }
 
-  async getClient() {
-    if (!this.client) {
-      // Check if we should use scanner session
-      const useScanner = config.sessionId && config.scannerUrl;
-      
-      if (useScanner) {
-        console.log('🔍 Checking for existing session in scanner...');
-        const sessionData = await this.sessionManager.fetchSessionFromScanner();
-        
-        if (sessionData) {
-          console.log('✅ Using session from scanner');
-          await this.sessionManager.ensureSessionDirectory();
-        } else {
-          console.log('⚠️  Session not found or invalid. Will generate QR code.');
-        }
-      }
+    // 2. Restore session from scanner (CRITICAL STEP)
+    await sessionManager.initialize();
 
-      // Puppeteer configuration for Render
-      const puppeteerConfig = {
+    // 3. Create WhatsApp client with LocalAuth
+    const client = new Client({
+      authStrategy: new LocalAuth({
+        clientId: process.env.SESSION_ID,
+        dataPath: './.wwebjs_auth'
+      }),
+      puppeteer: {
         headless: true,
         args: [
           '--no-sandbox',
@@ -40,59 +31,73 @@ class WhatsAppClient {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
-          '--single-process',
-          '--disable-gpu',
-          '--disable-software-rasterizer',
-          '--disable-extensions'
+          '--disable-gpu'
         ]
-      };
-
-      // Only set executablePath if explicitly provided
-      if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-        puppeteerConfig.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
       }
+    });
 
-      this.client = new Client({
-        authStrategy: new LocalAuth({
-          clientId: config.sessionId || 'dead-x-bot-default'
-        }),
-        puppeteer: puppeteerConfig,
-        webVersionCache: {
-          type: 'remote',
-          remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
-        }
+    // 4. Set up event listeners
+    client.on('qr', (qr) => {
+      console.log('⚠️ QR Code generated - session may have expired');
+      console.log('🔄 Please rescan using the scanner');
+    });
+
+    client.on('authenticated', () => {
+      console.log('✅ WhatsApp client authenticated');
+    });
+
+    client.on('auth_failure', (msg) => {
+      console.error('❌ Authentication failed:', msg);
+      console.log('🔄 Please generate a new session using the scanner');
+    });
+
+    client.on('ready', () => {
+      console.log('\n╔═══════════════════════════════════════╗');
+      console.log('║   ✅ Bot is Online and Ready!        ║');
+      console.log('╚═══════════════════════════════════════╝\n');
+      console.log('📱 Phone:', client.info.wid.user);
+      console.log('📦 Platform:', client.info.platform);
+      console.log('🔋 Battery:', client.info.battery + '%');
+    });
+
+    client.on('disconnected', (reason) => {
+      console.error('❌ Client disconnected:', reason);
+      console.log('🔄 Attempting to reconnect...');
+      // Delete local session and reinitialize
+      sessionManager.deleteLocal().then(() => {
+        client.initialize();
       });
-    }
-    return this.client;
-  }
+    });
 
-  async initialize() {
-    const client = await this.getClient();
-    
-    try {
-      await client.initialize();
-      return client;
-    } catch (error) {
-      console.error('❌ Failed to initialize WhatsApp client:', error);
-      throw error;
-    }
-  }
+    client.on('loading_screen', (percent, message) => {
+      console.log('⏳ Loading:', percent + '%', message);
+    });
 
-  async destroy() {
-    if (this.client) {
-      try {
-        await this.client.destroy();
-        this.client = null;
-        console.log('✅ WhatsApp client destroyed successfully');
-      } catch (error) {
-        console.error('❌ Error destroying client:', error);
+    // 5. Initialize the client
+    console.log('🚀 Starting WhatsApp client...');
+    await client.initialize();
+
+    // 6. Set timeout for initialization
+    const initTimeout = setTimeout(() => {
+      if (!client.info) {
+        console.error('❌ Client initialization timeout (60s)');
+        console.log('ℹ️ Possible issues:');
+        console.log('   - Session expired (rescan QR code)');
+        console.log('   - Network issues');
+        console.log('   - WhatsApp servers down');
+        process.exit(1);
       }
-    }
-  }
+    }, 60000);
 
-  isReady() {
-    return this.client && this.client.info;
+    // Clear timeout once ready
+    client.once('ready', () => clearTimeout(initTimeout));
+
+    return client;
+
+  } catch (error) {
+    console.error('❌ Failed to initialize WhatsApp client:', error);
+    throw error;
   }
 }
 
-module.exports = WhatsAppClient;
+module.exports = { initializeWhatsApp };
