@@ -1,171 +1,122 @@
-// server.js - DEAD-X-BOT Main Entry Point (FIXED VERSION)
-
 require('dotenv').config();
 const express = require('express');
-const { Client } = require('whatsapp-web.js');
+const { initializeWhatsApp } = require('./src/core/whatsappClient');
 const connectDB = require('./src/config/database');
-const WhatsAppClient = require('./src/core/client');
-const MessageHandler = require('./src/handlers/messageHandler');
-const EventHandler = require('./src/handlers/eventHandler');
-const config = require('./src/config/menu.config');
-
-// ASCII Banner
-console.log(`
-╔═══════════════════════════════════════╗
-║                                       ║
-║         💀 DEAD-X-BOT v1.0.0         ║
-║                                       ║
-║    WhatsApp Automation System         ║
-║    Developer: D3AD_XMILE              ║
-║                                       ║
-╚═══════════════════════════════════════╝
-`);
-
-// Connect to MongoDB
-console.log('🔄 Connecting to MongoDB...');
-connectDB();
-
-// Async initialization function
-async function initializeBot() {
-  try {
-    // Initialize WhatsApp Client
-    console.log('🔄 Initializing WhatsApp client...');
-    const whatsappClient = new WhatsAppClient();
-    const client = await whatsappClient.getClient(); // AWAIT HERE!
-
-    // Initialize Handlers
-    const messageHandler = new MessageHandler(client, config);
-    const eventHandler = new EventHandler(client);
-
-    // Setup event listeners
-    eventHandler.setupEvents();
-
-    // Handle incoming messages
-    client.on('message', async (msg) => {
-      try {
-        await messageHandler.handleMessage(msg);
-      } catch (error) {
-        console.error('Error handling message:', error);
-      }
-    });
-
-    // Initialize bot
-    await whatsappClient.initialize();
-    console.log('✅ DEAD-X-BOT initialized successfully!');
-
-    return client;
-
-  } catch (error) {
-    console.error('❌ Failed to initialize bot:', error);
-    process.exit(1);
-  }
-}
-
-// Start bot initialization
-let client = null;
-initializeBot().then(c => {
-  client = c;
-}).catch(error => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
-
-// ============================================
-// HTTP SERVER FOR RENDER (REQUIRED!)
-// ============================================
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 // Middleware
 app.use(express.json());
 
 // Health check endpoint
-app.get('/', (req, res) => {
-  const botStatus = client && client.info ? {
-    connected: true,
-    phone: client.info.wid.user,
-    platform: client.info.platform
-  } : {
-    connected: false,
-    status: 'Initializing...'
-  };
-
-  res.json({
-    status: 'running',
-    bot: 'DEAD-X-BOT',
-    version: '1.0.0',
-    developer: 'D3AD_XMILE',
-    uptime: Math.floor(process.uptime()),
-    whatsapp: botStatus,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Health endpoint for Render
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK',
-    uptime: process.uptime()
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    sessionId: process.env.SESSION_ID
   });
 });
 
 // Bot status endpoint
+let whatsappClient = null;
+
 app.get('/status', (req, res) => {
+  if (!whatsappClient || !whatsappClient.info) {
+    return res.json({
+      botStatus: 'disconnected',
+      message: 'Bot is not connected to WhatsApp'
+    });
+  }
+
   res.json({
-    bot: 'DEAD-X-BOT',
-    connected: client && client.info ? true : false,
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    timestamp: new Date().toISOString()
+    botStatus: 'connected',
+    phone: whatsappClient.info.wid.user,
+    platform: whatsappClient.info.platform,
+    battery: whatsappClient.info.battery,
+    sessionId: process.env.SESSION_ID,
+    uptime: process.uptime()
   });
 });
 
-// Start HTTP server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ HTTP server running on port ${PORT}`);
-  console.log(`✅ Health check: http://localhost:${PORT}/health`);
-});
-
-// ============================================
-// GRACEFUL SHUTDOWN
-// ============================================
-
-process.on('SIGINT', async () => {
-  console.log('\n⚠️  Shutting down gracefully...');
+// Start function
+async function start() {
   try {
-    if (client) {
-      await client.destroy();
+    console.log('\n╔═══════════════════════════════════════╗');
+    console.log('║                                       ║');
+    console.log('║         💀 DEAD-X-BOT v1.0.0         ║');
+    console.log('║                                       ║');
+    console.log('║    WhatsApp Automation System         ║');
+    console.log('║    Developer: D3AD_XMILE              ║');
+    console.log('║                                       ║');
+    console.log('╚═══════════════════════════════════════╝\n');
+
+    // Validate environment variables
+    if (!process.env.SCANNER_URL) {
+      throw new Error('SCANNER_URL not set in environment variables');
     }
-    console.log('✅ Bot shut down successfully');
-    process.exit(0);
+    if (!process.env.SESSION_ID) {
+      throw new Error('SESSION_ID not set in environment variables');
+    }
+    if (!process.env.MONGODB_URI) {
+      throw new Error('MONGODB_URI not set in environment variables');
+    }
+
+    // 1. Connect to MongoDB
+    console.log('🔄 Connecting to MongoDB...');
+    await connectDB();
+
+    // 2. Start HTTP server
+    app.listen(PORT, () => {
+      console.log(`✅ HTTP server running on port ${PORT}`);
+      console.log(`✅ Health check: http://localhost:${PORT}/health`);
+    });
+
+    // 3. Initialize WhatsApp client (AFTER session restoration)
+    whatsappClient = await initializeWhatsApp();
+
+    // 4. Set up message handler
+    whatsappClient.on('message', async (message) => {
+      // Your message handling logic here
+      if (message.body === '!ping') {
+        await message.reply('🏓 Pong! Bot is online!');
+      }
+      
+      if (message.body === '!status') {
+        const info = whatsappClient.info;
+        await message.reply(
+          `📊 *Bot Status*\n\n` +
+          `📱 Phone: ${info.wid.user}\n` +
+          `📦 Platform: ${info.platform}\n` +
+          `🔋 Battery: ${info.battery}%\n` +
+          `⏱️ Uptime: ${Math.floor(process.uptime())}s`
+        );
+      }
+    });
+
   } catch (error) {
-    console.error('❌ Error during shutdown:', error);
+    console.error('❌ Fatal error during startup:', error);
     process.exit(1);
   }
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  if (whatsappClient) {
+    await whatsappClient.destroy();
+  }
+  process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.log('\n⚠️  Received SIGTERM, shutting down...');
-  try {
-    if (client) {
-      await client.destroy();
-    }
-    console.log('✅ Bot shut down successfully');
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Error during shutdown:', error);
-    process.exit(1);
+  console.log('\n🛑 SIGTERM received, shutting down...');
+  if (whatsappClient) {
+    await whatsappClient.destroy();
   }
+  process.exit(0);
 });
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('💥 Uncaught Exception:', error);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
-});
+// Start the bot
+start();
