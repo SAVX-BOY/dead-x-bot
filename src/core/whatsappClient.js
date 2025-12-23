@@ -1,5 +1,7 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, NoAuth } = require('whatsapp-web.js');
 const SessionManager = require('../services/sessionManager');
+const fs = require('fs');
+const path = require('path');
 
 let client = null;
 
@@ -28,12 +30,49 @@ async function initializeWhatsApp() {
       process.env.SESSION_ID
     );
 
-    // 2. Restore session from scanner (CRITICAL STEP - This was missing!)
-    console.log('⏳ Restoring session from scanner...');
-    await sessionManager.initialize();
+    // 2. Fetch session from scanner
+    console.log('⏳ Fetching session from scanner...');
+    const sessionData = await sessionManager.fetchFromScanner();
+    
+    if (!sessionData || sessionData.status !== 'active') {
+      throw new Error('Session is not active. Please scan QR code again.');
+    }
 
-    // 3. Create WhatsApp client with LocalAuth
+    console.log('✅ Active session found!');
+    console.log('');
+
+    // 3. Check if session has authentication data
+    if (!sessionData.data || !sessionData.data.WABrowserId) {
+      console.log('⚠️  Session exists but has no authentication data');
+      console.log('🔄 You need to scan QR code using the scanner first');
+      console.log('🔗 Go to:', process.env.SCANNER_URL);
+      throw new Error('No authentication data in session');
+    }
+
+    // 4. Set up authentication directory
+    const authPath = path.join(process.cwd(), '.wwebjs_auth', `session-${process.env.SESSION_ID}`);
+    
+    // Create directory structure that whatsapp-web.js expects
+    console.log('💾 Setting up authentication directory...');
+    const defaultPath = path.join(authPath, 'Default');
+    fs.mkdirSync(defaultPath, { recursive: true });
+
+    // Write session data in the format whatsapp-web.js expects
+    const sessionString = JSON.stringify(sessionData.data);
+    
+    // Write to multiple locations for compatibility
+    fs.writeFileSync(path.join(authPath, 'session.json'), sessionString);
+    fs.writeFileSync(path.join(defaultPath, 'session.json'), sessionString);
+
+    console.log('✅ Authentication files prepared');
+    console.log('');
+
+    // 5. Create WhatsApp client with the session data injected
     console.log('⏳ Creating WhatsApp client instance...');
+    
+    // Use a custom auth strategy that loads our session
+    const { LocalAuth } = require('whatsapp-web.js');
+    
     client = new Client({
       authStrategy: new LocalAuth({
         clientId: process.env.SESSION_ID,
@@ -49,8 +88,13 @@ async function initializeWhatsApp() {
           '--no-first-run',
           '--no-zygote',
           '--single-process',
-          '--disable-gpu'
-        ]
+          '--disable-gpu',
+          '--disable-extensions',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding'
+        ],
+        timeout: 0
       },
       webVersionCache: {
         type: 'remote',
@@ -58,22 +102,49 @@ async function initializeWhatsApp() {
       }
     });
 
-    // 4. Set up event listeners
-    client.on('qr', (qr) => {
-      console.log('\n⚠️  QR Code generated - Session may have expired!');
-      console.log('📱 Please rescan QR code using the scanner');
-      console.log('🔗 Scanner URL:', process.env.SCANNER_URL);
+    // 6. Inject session before initialization
+    client.on('qr', async (qr) => {
+      console.log('\n⚠️  QR Code generated!');
       console.log('');
+      console.log('This means the session from scanner is not working.');
+      console.log('Possible reasons:');
+      console.log('  1. Session has expired (older than 7 days)');
+      console.log('  2. You logged out from this device in WhatsApp');
+      console.log('  3. Session data is corrupted');
+      console.log('');
+      console.log('🔧 SOLUTION:');
+      console.log('  1. Go to scanner:', process.env.SCANNER_URL);
+      console.log('  2. Start a new scan');
+      console.log('  3. Get the new SESSION_ID');
+      console.log('  4. Update SESSION_ID in Render environment variables');
+      console.log('  5. Redeploy the bot');
+      console.log('');
+      
+      // Try to update session in scanner with new QR
+      // This won't work automatically but logs for debugging
     });
 
-    client.on('authenticated', () => {
+    client.on('authenticated', async (session) => {
       console.log('✅ WhatsApp client authenticated successfully');
+      
+      // Update scanner with fresh session data
+      try {
+        console.log('📤 Updating session in scanner...');
+        await sessionManager.updateSession(session);
+        console.log('✅ Session updated in scanner');
+      } catch (error) {
+        console.error('⚠️  Failed to update session:', error.message);
+      }
     });
 
     client.on('auth_failure', (msg) => {
       console.error('\n❌ Authentication failed:', msg);
-      console.log('🔄 Please generate a new session using the scanner');
-      console.log('🔗 Scanner URL:', process.env.SCANNER_URL);
+      console.log('');
+      console.log('🔧 SOLUTION:');
+      console.log('  1. Delete current session from scanner');
+      console.log('  2. Create fresh session at:', process.env.SCANNER_URL);
+      console.log('  3. Update SESSION_ID in environment');
+      console.log('  4. Redeploy');
       console.log('');
     });
 
@@ -86,7 +157,6 @@ async function initializeWhatsApp() {
       console.log('📦 Platform:', client.info.platform);
       console.log('🔋 Battery Level:', client.info.battery + '%');
       console.log('🔌 Plugged:', client.info.plugged ? 'Yes' : 'No');
-      console.log('📍 Locale:', client.info.locales);
       console.log('');
       console.log('🎉 Bot is ready to receive messages!');
       console.log('💬 Try sending: !ping');
@@ -95,68 +165,39 @@ async function initializeWhatsApp() {
 
     client.on('disconnected', async (reason) => {
       console.error('\n❌ Client disconnected:', reason);
-      console.log('🔄 Attempting to reconnect...');
+      console.log('🔄 Cleaning up...');
       
-      // Delete local session and reinitialize
-      await sessionManager.deleteLocal();
-      
-      setTimeout(async () => {
-        try {
-          await client.initialize();
-        } catch (error) {
-          console.error('❌ Reconnection failed:', error.message);
-        }
-      }, 5000);
+      // Clean up auth files
+      try {
+        fs.rmSync(authPath, { recursive: true, force: true });
+      } catch (e) {
+        // Ignore cleanup errors
+      }
     });
 
     client.on('loading_screen', (percent, message) => {
       console.log(`⏳ Loading: ${percent}% - ${message}`);
     });
 
-    client.on('change_state', (state) => {
-      console.log('🔄 Connection state changed:', state);
-    });
-
-    // 5. Initialize the client
+    // 7. Initialize the client
     console.log('🚀 Starting WhatsApp client connection...\n');
     await client.initialize();
 
-    // 6. Set timeout for initialization
-    const initTimeout = setTimeout(() => {
+    // 8. Timeout handler
+    setTimeout(() => {
       if (!client.info) {
-        console.error('\n❌ Client initialization timeout (60 seconds)');
-        console.log('');
-        console.log('ℹ️  Possible issues:');
-        console.log('   1. Session expired - rescan QR code');
-        console.log('   2. Network connectivity issues');
-        console.log('   3. WhatsApp servers temporarily down');
-        console.log('   4. Session data corrupted');
-        console.log('');
-        console.log('🔧 Solutions:');
-        console.log('   - Generate new session at:', process.env.SCANNER_URL);
-        console.log('   - Check network connectivity');
-        console.log('   - Wait a few minutes and redeploy');
-        console.log('');
-        process.exit(1);
+        console.error('\n❌ Initialization timeout');
+        console.log('\nThe bot took too long to connect.');
+        console.log('This usually means the session is expired or invalid.');
+        console.log('\n🔧 Please create a fresh session at:', process.env.SCANNER_URL);
       }
-    }, 60000);
-
-    // Clear timeout once ready
-    client.once('ready', () => {
-      clearTimeout(initTimeout);
-    });
+    }, 90000); // 90 seconds
 
     return client;
 
   } catch (error) {
     console.error('\n❌ Failed to initialize WhatsApp client');
     console.error('Error:', error.message);
-    console.error('');
-    console.error('🔧 Troubleshooting:');
-    console.error('   1. Verify SCANNER_URL is correct');
-    console.error('   2. Verify SESSION_ID is valid');
-    console.error('   3. Check scanner is deployed and running');
-    console.error('   4. Generate fresh session if needed');
     console.error('');
     throw error;
   }
