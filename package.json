@@ -1,7 +1,7 @@
 {
   "name": "dead-x-bot",
-  "version": "1.0.0",
-  "description": "DEAD-X-BOT - WhatsApp Automation with External Function System by D3AD_XMILE",
+  "version": "2.0.0",
+  "description": "DEAD-X-BOT - WhatsApp Automation with Baileys by D3AD_XMILE",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -13,7 +13,8 @@
     "bot",
     "automation",
     "dead-x-bot",
-    "whatsapp-bot"
+    "whatsapp-bot",
+    "baileys"
   ],
   "author": "D3AD_XMILE",
   "license": "MIT",
@@ -22,12 +23,13 @@
     "npm": ">=9.0.0"
   },
   "dependencies": {
-    "whatsapp-web.js": "^1.23.0",
-    "qrcode-terminal": "^0.12.0",
+    "@whiskeysockets/baileys": "^6.7.8",
     "axios": "^1.6.2",
     "mongoose": "^8.0.3",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "pino": "^8.16.2",
+    "qrcode": "^1.5.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
