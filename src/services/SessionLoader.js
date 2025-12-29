@@ -86,8 +86,12 @@ class SessionLoader {
         defaultQueryTimeoutMs: 0,
         keepAliveIntervalMs: 30000,
         emitOwnEvents: true,
-        markOnlineOnConnect: true,
+        markOnlineOnConnect: true,      // ACTIVE MODE - Bot marks itself online
+        syncFullHistory: true,           // ACTIVE MODE - Bot syncs all messages
         getMessage: async () => ({ conversation: '' }),
+        generateHighQualityLinkPreview: true,
+        shouldIgnoreJid: () => false,    // ACTIVE MODE - Process all messages
+        retryRequestDelayMs: 250,
       });
 
       this.sock.ev.on('connection.update', async (update) => {
@@ -95,27 +99,41 @@ class SessionLoader {
 
         if (qr) {
           console.log('⚠️  QR generated - session expired!');
+          console.log('🔄 Generate new session from scanner');
         }
 
         if (connection === 'connecting') {
-          console.log('🔄 Connecting...');
+          console.log('🔄 Connecting to WhatsApp...');
         }
 
         if (connection === 'open') {
-          console.log('\n✅ Bot Connected!\n');
+          console.log('\n✅ Bot Connected Successfully!\n');
           console.log('📱 Phone:', this.sock.user.id.split(':')[0]);
           console.log('👤 Name:', this.sock.user.name);
-          console.log('\n🎉 Bot is ready!\n');
+          console.log('📦 Platform:', this.sock.user.platform);
+          console.log('\n🎉 Bot is ACTIVE and processing messages!\n');
         }
 
         if (connection === 'close') {
           const statusCode = lastDisconnect?.error?.output?.statusCode;
+          const reason = lastDisconnect?.error?.output?.payload?.message || 'Unknown';
           
+          console.log('🔌 Disconnected:', reason);
+
           if (statusCode === DisconnectReason.loggedOut) {
-            console.log('❌ Logged out');
+            console.log('❌ Logged out - need new session');
             process.exit(1);
+          } else if (statusCode === DisconnectReason.restartRequired) {
+            console.log('♻️  Restart required, reconnecting...');
+            setTimeout(() => this.connect(), 5000);
+          } else if (statusCode === DisconnectReason.connectionClosed) {
+            console.log('🔄 Connection closed, reconnecting in 10s...');
+            setTimeout(() => this.connect(), 10000);
+          } else if (statusCode === DisconnectReason.timedOut) {
+            console.log('⏱️  Timed out, reconnecting in 5s...');
+            setTimeout(() => this.connect(), 5000);
           } else {
-            console.log('🔄 Reconnecting...');
+            console.log('🔄 Reconnecting in 5s...');
             setTimeout(() => this.connect(), 5000);
           }
         }
@@ -130,6 +148,17 @@ class SessionLoader {
       throw error;
     }
   }
+
+  getSocket() {
+    return this.sock;
+  }
+
+  async disconnect() {
+    if (this.sock) {
+      await this.sock.logout();
+      console.log('👋 Bot disconnected');
+    }
+  }
 }
 
-module.exports = SessionLoader
+module.exports = SessionLoader;
